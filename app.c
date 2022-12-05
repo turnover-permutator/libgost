@@ -7,5 +7,7 @@ int main(int argc, char **argv) {
         printf("ECB error!\n");
     if (GostCipher64_ControlCTR())
         printf("CTR error!\n");
+    if (GostCipher64_ControlOFB())
+        printf("OFB error!\n");
     return 0;
 }

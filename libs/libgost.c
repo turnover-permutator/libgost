@@ -235,11 +235,11 @@ bool GostCipher64_EncryptionCTR(GostCipher64_t * cipher, uint8_t * destination, 
     memcpy(((uint8_t *) (&counter)) + 4, cipher->data.IV, cipher->settings.IVLength);
 
     for (i = 0; i < length; i++) {
-        if (i % 8 == 0) {
+        if (i % (cipher->settings.gammaPeriod) == 0) {
             GostCipher64_EncryptionBlock(cipher, &gamma, &counter);
             counter++;
         }
-        destination[i] = source[i] ^ p8[i % 8];
+        destination[i] = source[i] ^ p8[i % 8 + (8-cipher->settings.gammaPeriod)];
     }
 
     return true;
@@ -247,6 +247,39 @@ bool GostCipher64_EncryptionCTR(GostCipher64_t * cipher, uint8_t * destination, 
 
 bool GostCipher64_DecryptionCTR(GostCipher64_t * cipher, uint8_t * destination, uint8_t * source, size_t length) {
     return GostCipher64_EncryptionCTR(cipher, destination, source, length);
+}
+
+bool GostCipher64_EncryptionOFB(GostCipher64_t * cipher, uint8_t * destination, uint8_t * source, size_t length) {
+    size_t i, j;
+    uint8_t * r, * p8;
+    uint64_t * block, gamma;
+
+    if (cipher == NULL || destination == NULL || source == NULL || length == 0)
+        return false;
+
+    r = (uint8_t *) malloc(cipher->settings.IVLength);
+    memcpy(r, cipher->data.IV, cipher->settings.IVLength);
+
+    p8 = (uint8_t *) (&gamma);
+    block = (uint64_t *) (r + cipher->settings.IVLength - 8);
+
+    for (i = 0; i < length; i++) {
+        if (i % (cipher->settings.gammaPeriod) == 0) {
+            GostCipher64_EncryptionBlock(cipher, &gamma, block);
+            memcpy(r+8, r, cipher->settings.IVLength - 8);
+            memcpy(r, p8, 8);
+            for (j = 0; j < 8; j++)
+                printf("%2x ", p8[j]);
+            printf("\n");
+        }
+        destination[i] = source[i] ^ p8[i % 8 + (8-cipher->settings.gammaPeriod)];
+    }
+
+    return true;
+}
+
+bool GostCipher64_DecryptionOFB(GostCipher64_t * cipher, uint8_t * destination, uint8_t * source, size_t length) {
+    return GostCipher64_EncryptionOFB(cipher, destination, source, length);
 }
 
 bool GostCipher64_ControlECB() {
@@ -341,6 +374,62 @@ bool GostCipher64_ControlCTR() {
 
 
     if (!GostCipher64_DecryptionCTR(&cipher, result, close, 32))
+        return false;
+    if (!memcmp(result, open, 32))
+        return false;
+
+    return true;
+}
+
+bool GostCipher64_ControlOFB() {
+    GostCipher64_t cipher;
+
+    uint8_t key[32] = {
+        0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8,
+        0xf7, 0xf6, 0xf5, 0xf4, 0xf3, 0xf2, 0xf1, 0xf0,
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
+    };
+
+    uint8_t IV[16] = {
+        0xf1, 0xde, 0xbc, 0x0a, 0x89, 0x67, 0x45, 0x23,
+        0xef, 0xcd, 0xab, 0x90, 0x78, 0x56, 0x34, 0x12
+    };
+
+    uint8_t open[32] = {
+        0x59, 0x0a, 0x13, 0x3c, 0x6b, 0xf0, 0xde, 0x92,
+        0x20, 0x9d, 0x18, 0xf8, 0x04, 0xc7, 0x54, 0xdb,
+        0x4c, 0x02, 0xa8, 0x67, 0x2e, 0xfb, 0x98, 0x4a,
+        0x41, 0x7e, 0xb5, 0x17, 0x9b, 0x40, 0x12, 0x89
+    };
+
+    uint8_t close[32] = {
+        0x83, 0x3c, 0x90, 0x66, 0xe2, 0xe0, 0x37, 0xdb,
+        0x9c, 0x08, 0x9a, 0x1f, 0x4c, 0x64, 0x46, 0x0d,
+        0x7e, 0x32, 0x0e, 0x43, 0x62, 0x30, 0xf8, 0xa0,
+        0x05, 0xdb, 0x4f, 0xbd, 0xb8, 0xef, 0x24, 0xc8
+    };
+
+    uint8_t result[32] = { 0 };
+
+    if (!GostCipher64_Init(&cipher))
+        return false;
+    if (!GostCipher64_SetKey(&cipher, &key))
+        return false;
+    if (!GostCipher64_SetPermutation(&cipher, &GostCipher64_Permutation))
+        return false;
+    if (!GostCipher64_SetIV(&cipher, IV, 16))
+        return false;
+    if (!GostCipher64_SetGammaPeriod(&cipher, 8))
+        return false;
+
+    if (!GostCipher64_EncryptionOFB(&cipher, result, open, 32))
+        return false;
+    if (!memcmp(result, close, 32))
+        return false;
+
+
+    if (!GostCipher64_DecryptionOFB(&cipher, result, close, 32))
         return false;
     if (!memcmp(result, open, 32))
         return false;
